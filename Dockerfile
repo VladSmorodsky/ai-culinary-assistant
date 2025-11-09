@@ -1,0 +1,49 @@
+FROM python:3.12-slim
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    POETRY_VERSION=1.8.3 \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_CREATE=false
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    postgresql-client \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Poetry
+RUN pip install "poetry==$POETRY_VERSION"
+
+# Build argument to control dev dependencies installation
+ARG INSTALL_DEV=false
+
+# Copy poetry files for dependency installation
+COPY pyproject.toml poetry.lock ./
+
+# Install dependencies (conditionally include dev dependencies)
+RUN if [ "$INSTALL_DEV" = "true" ] ; then \
+        poetry install --with dev --no-interaction --no-ansi --no-root ; \
+    else \
+        poetry install --without dev --no-interaction --no-ansi --no-root ; \
+    fi
+
+# Copy application code
+COPY . .
+
+# Create a non-root user
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
+# Expose port
+EXPOSE 8000
+
+# Run the application
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
