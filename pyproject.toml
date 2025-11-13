@@ -7,10 +7,16 @@ readme = "README.md"
 packages = [{include = "app"}]
 
 [tool.poetry.dependencies]
-python = "^3.12"
+python = "^3.13"
 fastapi = "^0.121.1"
 uvicorn = {extras = ["standard"], version = "^0.38.0"}
 pydantic-settings = "^2.11.0"
+mcp = "^1.21.0"
+langchain = "^1.0.0"
+langchain-openai = "^1.0.2"
+langchain-community = "^0.4.0"
+tenacity = "^8.3.0"
+httpx = "^0.28.1"
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^4.4.0"
