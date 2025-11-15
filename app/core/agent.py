@@ -1,6 +1,6 @@
 from __future__ import annotations
 import json, os, re
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 import httpx
 
@@ -16,6 +16,7 @@ from .log_agent import get_log_agent
 log = get_log_agent()
 
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+LOG_PROMPTS = os.getenv("LOG_PROMPTS", "1").lower() in {"1", "true", "yes", "on"}
 
 def _llm() -> ChatOpenAI:
     return ChatOpenAI(model=MODEL, temperature=0.3)
@@ -28,6 +29,41 @@ barcode_kv = FileKV(BARCODES_PATH)     # name -> [barcodes]
 nutrition_kv = FileKV(NUTRITION_PATH)  # barcode -> {product, nutrition}
 
 json_parser = SimpleJsonOutputParser()
+
+# Helper: format prompt messages for logging (use format_messages for reliability)
+def _format_prompt_messages(prompt: ChatPromptTemplate, variables: Dict[str, Any]) -> List[Dict[str, str]]:
+    try:
+        messages = prompt.format_messages(**variables)
+        out: List[Dict[str, str]] = []
+        for m in messages:
+            role = getattr(m, "role", getattr(m, "type", "unknown"))
+            content = getattr(m, "content", "")
+            if isinstance(content, list):
+                content = "\n".join([p.get("text", "") if isinstance(p, dict) else str(p) for p in content])
+            out.append({"role": role, "content": str(content)})
+        if not out:
+            log.step("prompt", "format.empty", vars=variables)
+        return out
+    except Exception as e:
+        log.step("prompt", "format.error", error=repr(e), vars=variables)
+        return []
+
+# New helper: log prompt consistently
+def _log_prompt(component: str, step: str, prompt: ChatPromptTemplate, variables: Dict[str, Any]):
+    if not LOG_PROMPTS:
+        return
+    msgs = _format_prompt_messages(prompt, variables)
+    flat_lines: List[str] = []
+    for i, m in enumerate(msgs):
+        content = m.get("content", "")
+        if len(content) > 400:
+            content = content[:400] + "..."
+        flat_lines.append(f"[{i}:{m.get('role','?')}] {content}")
+    if not flat_lines:
+        # Fallback: raw template repr for diagnostic
+        flat_lines.append(f"(raw_template) {repr(prompt.messages)[:400]}")
+    flat = " || ".join(flat_lines)
+    log.step(component, step, message_count=len(msgs), prompt_flat=flat)
 
 PLAN_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """Ти — асистент-нутриціолог. Твоя задача — скласти план харчування українською мовою.
@@ -249,13 +285,15 @@ def _normalize_plan_dict(data: Dict[str, Any]) -> Dict[str, Any]:
 @retry(stop=stop_after_attempt(3), wait=wait_exponential_jitter(0.5, 1.5))
 async def _generate_meal_plan(req: MealPlanRequest) -> MealPlanResponse:
     log.step("meal_plan", "llm_plan.start", days=req.days, dishes=req.dishes_uk)
-    chain = PLAN_PROMPT | _llm() | json_parser
-    data = await chain.ainvoke({
+    plan_vars = {
         "days": req.days,
         "dishes_uk": ", ".join(req.dishes_uk) if req.dishes_uk else "(порожньо)",
         "allow_new_similar": str(bool(req.allow_new_similar)).lower(),
         "new_similar_ratio": req.new_similar_ratio
-    })
+    }
+    _log_prompt("meal_plan", "llm_plan.prompt", PLAN_PROMPT, plan_vars)
+    chain = PLAN_PROMPT | _llm() | json_parser
+    data = await chain.ainvoke(plan_vars)
     # Normalize structure to current schema
     data = _normalize_plan_dict(data if isinstance(data, dict) else {})
     log.step("meal_plan", "llm_plan.done", keys=list(data.keys()))
@@ -263,24 +301,24 @@ async def _generate_meal_plan(req: MealPlanRequest) -> MealPlanResponse:
         return MealPlanResponse(**data)
     except Exception as e:
         # Log the raw data for debugging before retrying
-        log.exception("meal_plan", "llm_plan.validation_fail", detail=str(e))
+        log.exception("meal_plan", "llm_plan.validation_fail", detail=str(e), raw=data)
         raise
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential_jitter(0.5, 1.5))
 async def _enrich_with_nutrition(plan: MealPlanResponse) -> MealPlanResponse:
     log.step("meal_plan", "nutrition_enrich.start", dish_count=sum(len(m.dishes) for d in plan.days for m in d.meals))
     serialized = plan.model_dump(mode="json")
+    vars_nutrition = {"plan_json": json.dumps(serialized, ensure_ascii=False)}
+    _log_prompt("meal_plan", "nutrition.prompt", NUTRITION_PROMPT, vars_nutrition)
     chain = NUTRITION_PROMPT | _llm() | json_parser
-    data = await chain.ainvoke({"plan_json": json.dumps(serialized, ensure_ascii=False)})
+    data = await chain.ainvoke(vars_nutrition)
     # Build map keyed only by dish title (LLM output currently lacks day info)
     nutrition_map: Dict[str, List[Dict[str, Any]]] = {}
     for item in data.get("items", []):
-        if not isinstance(item, dict):
-            continue
-        dish_title = item.get("dish_uk")
-        if not dish_title:
-            continue
-        nutrition_map[dish_title] = item.get("nutrition", [])
+        if isinstance(item, dict):
+            dish_title = item.get("dish_uk")
+            if dish_title:
+                nutrition_map[dish_title] = item.get("nutrition", [])
 
     # Assign nutrition by dish title match
     for day in plan.days:
@@ -300,7 +338,7 @@ async def _enrich_with_nutrition(plan: MealPlanResponse) -> MealPlanResponse:
 async def build_meal_plan(req: MealPlanRequest) -> MealPlanResponse:
     log.step("meal_plan", "build.start")
     plan = await _generate_meal_plan(req)
-    plan = await _enrich_with_nutrition(plan)
+    plan = await _enrich_with_nutrition(plan)  # re-enabled enrichment (previously commented)
     log.step("meal_plan", "build.done", days=len(plan.days))
     return plan
 
@@ -362,6 +400,10 @@ async def dish_info(dish_uk: str) -> DishInfoResponse:
             ("system", "Ти — перекладач. Переклади список інгредієнтів з української на англійську."),
             ("human", "Список інгредієнтів: {ingredients}")
         ])
+        # Log translation prompt
+        trans_msgs = _format_prompt_messages(trans_prompt, {"ingredients": ingredients_text})
+        if trans_msgs:
+            log.step("dish_info", "translate_ingredients.prompt", messages=trans_msgs)
         chain = trans_prompt | _llm() | json_parser
         trans = await chain.ainvoke({"ingredients": ingredients_text})
         en_list = trans.get("ingredients_en") or []
