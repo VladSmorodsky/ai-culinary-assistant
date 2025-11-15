@@ -4,6 +4,11 @@ from typing import Any, Dict, List, Optional, Tuple, Protocol
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client  # type: ignore
+try:
+    from mcp.shared.exceptions import McpError  # type: ignore
+except Exception:  # pragma: no cover
+    class McpError(Exception):
+        pass
 
 class _ToolLike(Protocol):  # minimal structural type for tools returned by MCP
     name: str  # noqa: D401
@@ -26,7 +31,13 @@ class MCPClient:
         self._dish_tool_name = os.getenv("DISH_INFO_TOOL_NAME") or None
 
     async def _find_tool(self, session: ClientSession, preferred: Optional[str], keywords: List[str]) -> str:
-        tools: List[_ToolLike | Any] = await session.list_tools()  # type: ignore
+        try:
+            tools: List[_ToolLike | Any] = await session.list_tools()  # type: ignore
+        except Exception as e:
+            # If listing fails but preferred provided, fallback to preferred name directly
+            if preferred:
+                return preferred
+            raise RuntimeError(f"Failed to list MCP tools: {e}")
         if preferred:
             for t in tools:
                 t_name = getattr(t, "name", None)
@@ -62,9 +73,11 @@ class MCPClient:
             await ctx.__aexit__(None, None, None)
 
     async def _call_json_tool(self, session: ClientSession, tool_name: str, payload: Dict[str, Any]) -> Any:
-        """Call a tool expecting JSON output; try to parse first text item."""
-        # Pass dict; mcp client will serialize as needed.
-        res = await session.call_tool(tool_name, payload)  # type: ignore[arg-type]
+        """Call a tool expecting JSON output; try to parse first text item. Return None on any failure."""
+        try:
+            res = await session.call_tool(tool_name, payload)  # type: ignore[arg-type]
+        except Exception:
+            return None
         content = getattr(res, "content", None)
         if not content:
             return None
@@ -80,7 +93,10 @@ class MCPClient:
     async def find_barcodes_for_names(self, names: List[str]) -> Dict[str, List[str]]:
         session, resources, _rw = await self._open_session()
         try:
-            map_tool = await self._find_tool(session, self._map_tool_name, ["map", "barcode", "lookup"])
+            try:
+                map_tool = await self._find_tool(session, self._map_tool_name, ["map", "barcode", "lookup"])
+            except Exception:
+                return {n: [] for n in names}
             out: Dict[str, List[str]] = {}
             for name in names:
                 data = await self._call_json_tool(session, map_tool, {"query": name})
@@ -88,18 +104,23 @@ class MCPClient:
                 if isinstance(data, dict):
                     bs = data.get("barcodes") or data.get("codes") or []
                     if isinstance(bs, list):
-                        barcodes = [str(b) for b in bs]
+                        barcodes = [str(b) for b in bs if str(b).strip()]
                 elif isinstance(data, list):
-                    barcodes = [str(x) for x in data]
+                    barcodes = [str(x) for x in data if str(x).strip()]
                 out[name] = barcodes
             return out
+        except (McpError, RuntimeError):
+            return {n: [] for n in names}
         finally:
             await self._close_session(resources)
 
     async def analyze_nutrition(self, barcodes: List[str]) -> Dict[str, Dict[str, Any]]:
         session, resources, _rw = await self._open_session()
         try:
-            nutrition_tool = await self._find_tool(session, self._nutrition_tool_name, ["analyze", "nutrition"])
+            try:
+                nutrition_tool = await self._find_tool(session, self._nutrition_tool_name, ["analyze", "nutrition"])  # noqa: E501
+            except Exception:
+                return {str(code): {"product": {}, "nutrition": []} for code in barcodes}
             results: Dict[str, Dict[str, Any]] = {}
             for code in barcodes:
                 data = await self._call_json_tool(session, nutrition_tool, {"barcode": str(code)})
@@ -112,6 +133,8 @@ class MCPClient:
                     nutrition = data
                 results[str(code)] = {"product": product, "nutrition": nutrition}
             return results
+        except (McpError, RuntimeError):
+            return {str(code): {"product": {}, "nutrition": []} for code in barcodes}
         finally:
             await self._close_session(resources)
 
@@ -121,10 +144,15 @@ class MCPClient:
         """
         session, resources, _rw = await self._open_session()
         try:
-            tool = await self._find_tool(session, self._dish_tool_name, ["dish", "recipe", "info"])  # reuse heuristic
+            try:
+                tool = await self._find_tool(session, self._dish_tool_name, ["dish", "recipe", "info"])  # reuse heuristic
+            except Exception:
+                return {"dish_title": dish_name}
             data = await self._call_json_tool(session, tool, {"query": dish_name})
             if isinstance(data, dict):
                 return data
+            return {"dish_title": dish_name}
+        except (McpError, RuntimeError):
             return {"dish_title": dish_name}
         finally:
             await self._close_session(resources)

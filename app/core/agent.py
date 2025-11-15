@@ -8,7 +8,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers.json import SimpleJsonOutputParser
 
-from .schemas import MealPlanRequest, MealPlanResponse, DishInfoResponse, IngredientsPair, NutritionItem
+from .schemas import MealPlanRequest, MealPlanResponse, DishInfoResponse, IngredientItem, NutritionItem
 from .mcp_client import MCPClient
 from .storage import FileKV
 from .log_agent import get_log_agent
@@ -62,7 +62,7 @@ def _log_prompt(component: str, step: str, prompt: ChatPromptTemplate, variables
     if not flat_lines:
         # Fallback: raw template repr for diagnostic
         flat_lines.append(f"(raw_template) {repr(prompt.messages)[:400]}")
-    flat = " || ".join(flat_lines)
+    flat = " || " .join(flat_lines)
     log.step(component, step, message_count=len(msgs), prompt_flat=flat)
 
 PLAN_PROMPT = ChatPromptTemplate.from_messages([
@@ -149,32 +149,29 @@ NUTRITION_PROMPT = ChatPromptTemplate.from_messages([
     ("human", "Ось JSON плану харчування українською: {plan_json}")
 ])
 
+# Updated prompt: remove nutrition generation (will use MCP), add short_recipe field
 DISH_INFO_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """Ти — кулінарний асистент.
 
 Для вказаної страви українською мовою поверни СТРОГО валідний JSON такого формату:
 {{
-  "dish_title": "Назва страви українською",
-  "short_description": "1–2 короткі речення українською",
-  "recipe": "Детальний рецепт українською",
-  "ingredients": {{
-    "uk": ["інгредієнт 1", "інгредієнт 2"],
-    "en": ["ingredient 1", "ingredient 2"]
-  }},
-  "nutrition": [
+  \"dish_title\": \"Назва страви українською\",
+  \"short_description\": \"1–2 короткі речення українською\",
+  \"short_recipe\": \"1–3 короткі кроки приготування українською\",
+  \"recipe\": \"Детальний рецепт українською\",
+  \"ingredients\": [
     {{
-      "nutrition_title": "Калорії",
-      "value": 350,
-      "unit": "kcal"
+      \"name\": \"інгредієнт 1\",
+      \"barcode\": \"EAN або UPC формат. Якщо не можеш знайти то поверни код найбільш схожого продукту\"
     }}
   ]
 }}
 
 Вимоги:
-- Опис і рецепт — українською.
-- ingredients.uk — українською; ingredients.en — англійською.
-- nutritional_title — українською.
-- Якщо чогось не знаєш, зроби найкращу обґрунтовану оцінку.
+- Усе текстове наповнення українською.
+- Якщо штрихкод (barcode) невідомий — поверни код найбільш схожого продукту.
+- НЕ додавай нутрієнти.
+- Поверни ТІЛЬКИ JSON без пояснень.
 """),
     ("human", "Страва: {dish_uk}")
 ])
@@ -382,64 +379,199 @@ async def _fetch_product_by_barcode(barcode: str) -> Dict[str, Any]:
     return result
 
 async def dish_info(dish_uk: str) -> DishInfoResponse:
-    log.step("dish_info", "start", dish=dish_uk)
-    mcp_client = MCPClient()
-    external = await mcp_client.get_dish_info(dish_uk)  # type: ignore[attr-defined]
+    """Generate dish info using LLM then enrich with barcodes and nutrition via MCP.
 
-    dish_title = external.get("dish_title") or dish_uk
-    short_description = external.get("short_description", "")
-    recipe = external.get("recipe", "")
-    ingredients = external.get("ingredients", {})
-    nutrition_external = external.get("nutrition", [])
-
-    en_list = ingredients.get("en") or []
-    if not en_list and ingredients.get("uk"):
-        log.step("dish_info", "translate_ingredients.start")
-        ingredients_text = ", ".join(ingredients["uk"])
-        trans_prompt = ChatPromptTemplate.from_messages([
-            ("system", "Ти — перекладач. Переклади список інгредієнтів з української на англійську."),
-            ("human", "Список інгредієнтів: {ingredients}")
-        ])
-        # Log translation prompt
-        trans_msgs = _format_prompt_messages(trans_prompt, {"ingredients": ingredients_text})
-        if trans_msgs:
-            log.step("dish_info", "translate_ingredients.prompt", messages=trans_msgs)
-        chain = trans_prompt | _llm() | json_parser
-        trans = await chain.ainvoke({"ingredients": ingredients_text})
-        en_list = trans.get("ingredients_en") or []
-        log.step("dish_info", "translate_ingredients.done", count=len(en_list))
-
-    nutrition_items = [
-        NutritionItem(
-            nutrition_title=n.get("nutrition_title") or n.get("title") or n.get("name", ""),
-            value=float(n.get("value", 0) or 0),
-            unit=n.get("unit", "")
-        ) for n in nutrition_external if isinstance(n, dict)
-    ]
-
-    base = {
-        "dish_title": dish_title,
-        "short_description": short_description,
-        "recipe": recipe,
-        "ingredients": {
-            "uk": ingredients.get("uk", []),
-            "en": en_list
-        },
-        "nutrition": [n.model_dump(mode="json") for n in nutrition_items]
+    New expected LLM format:
+    {
+      "dish_title": "...",
+      "short_description": "...",
+      "short_recipe": "...",
+      "recipe": "...",
+      "ingredients": [ {"name": "інгредієнт", "barcode": "1234567890123"}, ... ]
     }
 
-    log.step("dish_info", "done", dish=base.get("dish_title", dish_uk), nutrition_count=len(nutrition_items))
+    Steps:
+    1. Call LLM; parse ingredients list objects (name + optional barcode).
+    2. Collect names missing barcode; resolve via MCP map tool.
+    3. Persist caches and aggregate nutrition for resolved barcodes (fetch missing via MCP nutrition tool).
+    4. Translate nutrition titles if needed.
+    5. Return DishInfoResponse with IngredientItem list.
+    """
+    log.step("dish_info", "start", dish=dish_uk)
+
+    # 1. LLM dish metadata
+    vars_prompt = {"dish_uk": dish_uk}
+    _log_prompt("dish_info", "prompt", DISH_INFO_PROMPT, vars_prompt)
+    chain = DISH_INFO_PROMPT | _llm() | json_parser
+    raw = await chain.ainvoke(vars_prompt)
+    if not isinstance(raw, dict):
+        raw = {"dish_title": dish_uk}
+
+    dish_title = raw.get("dish_title") or dish_uk
+    short_description = raw.get("short_description", "")
+    short_recipe = raw.get("short_recipe", "")
+    recipe = raw.get("recipe", "")
+
+    # Parse ingredients list (new format); fallback: if legacy structure found
+    ing_list_raw = raw.get("ingredients") or []
+    ingredient_items: List[IngredientItem] = []
+    if isinstance(ing_list_raw, list):
+        for ing in ing_list_raw:
+            if isinstance(ing, dict):
+                name = str(ing.get("name", "")).strip()
+                barcode_val = str(ing.get("barcode", "")).strip()
+                if name:
+                    ingredient_items.append(IngredientItem(uk=name, barcode=barcode_val))
+    elif isinstance(ing_list_raw, dict):  # legacy support {"uk": [...], "en": [...]} but en ignored now
+        uk_legacy = ing_list_raw.get("uk") or []
+        if isinstance(uk_legacy, list):
+            for name in uk_legacy:
+                name_s = str(name).strip()
+                if name_s:
+                    ingredient_items.append(IngredientItem(uk=name_s, barcode=""))
+    # Deduplicate by (uk, barcode) preserving order (case-insensitive name)
+    seen_names: set[str] = set()
+    deduped: List[IngredientItem] = []
+    for it in ingredient_items:
+        key = it.uk.lower()
+        if key not in seen_names:
+            seen_names.add(key)
+            deduped.append(it)
+    ingredient_items = deduped
+
+    # 2. Resolve barcodes for missing ones via MCP & caching
+    names_to_lookup: List[str] = [it.uk for it in ingredient_items if not it.barcode]
+    resolved_map: Dict[str, List[str]] = {}
+    if names_to_lookup:
+        log.step("dish_info", "barcode.lookup", count=len(names_to_lookup))
+        mcp_client = MCPClient()
+        found = await mcp_client.find_barcodes_for_names(names_to_lookup)
+        # Fallback token logic for unresolved
+        unresolved: List[str] = []
+        for name, codes in found.items():
+            norm_codes = [str(c).strip() for c in codes if str(c).strip()]
+            if norm_codes:
+                barcode_kv.set(name, norm_codes)
+                resolved_map[name] = norm_codes
+            else:
+                unresolved.append(name)
+                resolved_map[name] = []
+        if unresolved:
+            log.step("dish_info", "barcode.fallback.start", count=len(unresolved))
+            token_queries: List[str] = []
+            map_name_tokens: Dict[str, List[str]] = {}
+            for name in unresolved:
+                parts = [p for p in re.split(r"[\s,]+", name) if p]
+                tokens: List[str] = []
+                if parts:
+                    tokens.append(parts[0])
+                if len(parts) > 1:
+                    tokens.append(parts[-1])
+                uniq: List[str] = []
+                for t in tokens:
+                    if t.lower() not in [u.lower() for u in uniq]:
+                        uniq.append(t)
+                map_name_tokens[name] = uniq
+                token_queries.extend(uniq)
+            token_queries = list(dict.fromkeys(token_queries))
+            if token_queries:
+                found_tokens = await mcp_client.find_barcodes_for_names(token_queries)
+                for ing_name, toks in map_name_tokens.items():
+                    collected: List[str] = []
+                    for tk in toks:
+                        codes_for_token = found_tokens.get(tk) or []
+                        for c in codes_for_token:
+                            sc = str(c).strip()
+                            if sc and sc not in collected:
+                                collected.append(sc)
+                        if collected:
+                            break
+                    if collected:
+                        barcode_kv.set(ing_name, collected)
+                        resolved_map[ing_name] = collected
+            log.step("dish_info", "barcode.fallback.done")
+
+    # Apply resolved primary barcode to items
+    for it in ingredient_items:
+        if not it.barcode:
+            codes = resolved_map.get(it.uk, [])
+            if codes:
+                it.barcode = codes[0]
+
+    # Collect list of barcodes for nutrition (skip empty)
+    ordered_barcodes: List[str] = [it.barcode for it in ingredient_items if it.barcode]
+
+    # 3. Fetch nutrition per barcode with caching & MCP only for missing
+    missing_barcodes = [b for b in ordered_barcodes if not nutrition_kv.get(b)]
+    nutrition_items_agg: List[NutritionItem] = []
+    if missing_barcodes:
+        log.step("dish_info", "nutrition.lookup", count=len(missing_barcodes))
+        mcp_client2 = MCPClient()
+        analyzed = await mcp_client2.analyze_nutrition(missing_barcodes)
+        for b, data in analyzed.items():
+            nutrition_kv.set(b, data)
+
+    # Aggregate nutrition
+    for b in ordered_barcodes:
+        entry = nutrition_kv.get(b) or {}
+        n_list = entry.get("nutrition") or []
+        for n in n_list:
+            if isinstance(n, dict):
+                title = n.get("nutrition_title") or n.get("title") or n.get("name") or ""
+                value = n.get("value") or n.get("amount") or 0
+                unit = n.get("unit") or n.get("u") or ""
+                try:
+                    value_f = float(value)
+                except Exception:
+                    value_f = 0.0
+                nutrition_items_agg.append(NutritionItem(nutrition_title=title, value=value_f, unit=unit))
+
+    # 4. Translate nutrition titles if needed
+    def _is_uk(text: str) -> bool:
+        return bool(re.search(r"[А-Яа-яІіЇїЄєҐґ]", text))
+    needs_translation = any(not _is_uk(n.nutrition_title) for n in nutrition_items_agg)
+    if needs_translation and nutrition_items_agg:
+        trans_prompt = ChatPromptTemplate.from_messages([
+            ("system", """Переклади назви нутрієнтів на українську. Поверни СТРОГО JSON:
+{
+  "nutrition": [
+    {"nutrition_title": "Калорії", "value": 350, "unit": "kcal"}
+  ]
+}
+Не змінюй value і unit.
+"""),
+            ("human", "Ось JSON нутрієнтів англійською: {nutrition_json}")
+        ])
+        payload = {"nutrition": [n.model_dump(mode="json") for n in nutrition_items_agg]}
+        chain_trans = trans_prompt | _llm() | json_parser
+        translated = await chain_trans.ainvoke({"nutrition_json": json.dumps(payload, ensure_ascii=False)})
+        nut_out = translated.get("nutrition") if isinstance(translated, dict) else None
+        if isinstance(nut_out, list):
+            new_items: List[NutritionItem] = []
+            for n in nut_out:
+                if isinstance(n, dict):
+                    new_items.append(NutritionItem(
+                        nutrition_title=n.get("nutrition_title") or n.get("title") or n.get("name", ""),
+                        value=float(n.get("value", 0) or 0),
+                        unit=n.get("unit", "")
+                    ))
+            if new_items:
+                nutrition_items_agg = new_items
+                log.step("dish_info", "nutrition.translated", count=len(new_items))
+
+    # 5. Deduplicate nutrition (title+unit)
+    merged: Dict[tuple, float] = {}
+    for n in nutrition_items_agg:
+        key = (n.nutrition_title.lower().strip(), n.unit.lower().strip())
+        merged[key] = merged.get(key, 0.0) + n.value
+    dedup_items = [NutritionItem(nutrition_title=k[0], value=v, unit=k[1]) for k, v in merged.items()]
+
+    log.step("dish_info", "done", dish=dish_title, ingredients=len(ingredient_items), barcodes=len(ordered_barcodes), nutrition_count=len(dedup_items))
     return DishInfoResponse(
-        dish_title=base.get("dish_title", dish_uk),
-        short_description=base.get("short_description", ""),
-        recipe=base.get("recipe", ""),
-        ingredients=IngredientsPair(uk=base.get("ingredients", {}).get("uk", []),
-                                    en=en_list),
-        nutrition=[
-            NutritionItem(
-                nutrition_title=n.get("nutrition_title") or n.get("title") or n.get("name", ""),
-                value=float(n.get("value", 0) or 0),
-                unit=n.get("unit", "")
-            ) for n in nutrition_items if isinstance(n, NutritionItem)
-        ]
+        dish_title=dish_title,
+        short_description=short_description,
+        short_recipe=short_recipe,
+        recipe=recipe,
+        ingredients=ingredient_items,
+        nutrition=dedup_items
     )

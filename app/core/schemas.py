@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, Field, conlist, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 MEAL_TITLES_UK = ["сніданок", "обід", "вечеря"]
 
@@ -12,11 +12,12 @@ class NutritionItem(BaseModel):
 class DishItem(BaseModel):
     dish_title: str
     short_description: str
+    short_recipe: str = ""  # newly added concise recipe (1–3 sentences or steps)
     nutrition: List[NutritionItem]
 
 class MealItem(BaseModel):
     meal_title: str
-    dishes: conlist(DishItem, min_length=1)
+    dishes: List[DishItem] = Field(..., min_length=1)
 
     @field_validator("meal_title")
     @classmethod
@@ -27,14 +28,20 @@ class MealItem(BaseModel):
 
 class DayPlan(BaseModel):
     day_number: int = Field(..., ge=1)
-    meals: conlist(MealItem, min_length=1)
+    meals: List[MealItem] = Field(..., min_length=1)
 
 class MealPlanResponse(BaseModel):
-    days: conlist(DayPlan, min_length=1)
+    days: List[DayPlan] = Field(..., min_length=1)
 
-class IngredientsPair(BaseModel):
+# Deprecated structure (kept for potential backward compatibility)
+class IngredientsPair(BaseModel):  # pragma: no cover
     uk: List[str]
     en: List[str]
+    barcodes: List[str] = Field(default_factory=list)  # aligned list of barcodes (EAN/UPC) for ingredients
+
+class IngredientItem(BaseModel):
+    uk: str
+    barcode: Optional[str] = ""  # EAN/UPC string or empty if unresolved
 
 class DishInfoRequest(BaseModel):
     dish_uk: str
@@ -42,8 +49,10 @@ class DishInfoRequest(BaseModel):
 class DishInfoResponse(BaseModel):
     dish_title: str
     short_description: str
-    recipe: str
-    ingredients: IngredientsPair
+    short_recipe: str = ""  # new field
+    recipe: str  # keeping original longer recipe for backward compatibility
+    # New ingredients representation: list of objects with uk + barcode
+    ingredients: List[IngredientItem]
     nutrition: List[NutritionItem]
 
 class MealPlanRequest(BaseModel):
