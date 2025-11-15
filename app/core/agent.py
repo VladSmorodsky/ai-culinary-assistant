@@ -161,7 +161,7 @@ DISH_INFO_PROMPT = ChatPromptTemplate.from_messages([
   "recipe": "Детальний рецепт українською",
   "ingredients": [
     {{
-      "name": "інгредієнт 1",
+      "name": "інгредієнт 1 на англійській",
       "barcode": "EAN-13 формат з для пошуку на world.openfoodfacts.org. Якщо не можеш знайти то поверни EAN-13 код найбільш схожого продукту з world.openfoodfacts.org"
     }}
   ]
@@ -169,7 +169,8 @@ DISH_INFO_PROMPT = ChatPromptTemplate.from_messages([
 
 Вимоги:
 - Усе текстове наповнення українською.
-- Якщо штрихкод (barcode) невідомий — поверни EAN-13 код найбільш схожого продукту з world.openfoodfacts.org.
+- Якщо штрихкод (barcode) невідомий — поверни EAN-13 код найбільш схожого продукту з world.openfoodfacts.org
+- Коди повинні бути реальними а не вигаданими чи не справжніми як 4820001000016', '4820002000022', '4820003000038'
 - НЕ додавай нутрієнти.
 - Поверни ТІЛЬКИ JSON без пояснень.
 """),
@@ -439,9 +440,14 @@ async def dish_info(dish_uk: str) -> DishInfoResponse:
             deduped.append(it)
     ingredient_items = deduped
 
+    # print(ingredient_items)
+
     # 2. Resolve barcodes for missing ones via MCP & caching
-    names_to_lookup: List[str] = [it.uk for it in ingredient_items if not it.barcode]
+    # names_to_lookup: List[str] = [it.uk for it in ingredient_items if not it.barcode]
+    names_to_lookup: List[str] = [it.uk for it in ingredient_items if it.barcode]
     resolved_map: Dict[str, List[str]] = {}
+
+    print(names_to_lookup)
 
     if names_to_lookup:
         log.step("dish_info", "barcode.lookup", count=len(names_to_lookup))

@@ -1,0 +1,207 @@
+{
+	"info": {
+		"_postman_id": "67cc5b09-d221-4dbd-a078-0b698bc17f87",
+		"name": "Common",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "905429",
+		"_collection_link": "https://interstellar-shuttle-514623.postman.co/workspace/Meal-agent~f5d637c3-1212-40b5-b313-6df14cde3af3/collection/905429-67cc5b09-d221-4dbd-a078-0b698bc17f87?action=share&source=collection_link&creator=905429"
+	},
+	"item": [
+		{
+			"name": "Agent",
+			"item": [
+				{
+					"name": "/ping",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{agent-api-url}}/ping",
+							"host": [
+								"{{agent-api-url}}"
+							],
+							"path": [
+								"ping"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "/meal-plan",
+					"request": {
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "password",
+									"value": "{{agent-client-secret}}",
+									"type": "string"
+								},
+								{
+									"key": "username",
+									"value": "{{agent-client-id}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"days\": 1,\n  \"dishes_uk\": [\"Пюре\", \"Борщ\", \"Панкейки\", \"Суп-пюре з чечевицею\", \"Суп з гречкою\", \"Капусняк\"],\n  \"allow_new_similar\": true,\n  \"new_similar_ratio\": 0.3\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{agent-api-url}}/meal-plan",
+							"host": [
+								"{{agent-api-url}}"
+							],
+							"path": [
+								"meal-plan"
+							]
+						}
+					},
+					"response": [
+						{
+							"name": "response",
+							"originalRequest": {
+								"method": "POST",
+								"header": [],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"days\": 1,\n  \"dishes_uk\": [\"Пюре\", \"Борщ\", \"Панкейки\", \"Суп-пюре з чечевицею\", \"Суп з гречкою\", \"Капусняк\"],\n  \"allow_new_similar\": true,\n  \"new_similar_ratio\": 0.3\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{agent-api-url}}/meal-plan",
+									"host": [
+										"{{agent-api-url}}"
+									],
+									"path": [
+										"meal-plan"
+									]
+								}
+							},
+							"status": "OK",
+							"code": 200,
+							"_postman_previewlanguage": null,
+							"header": [
+								{
+									"key": "date",
+									"value": "Sat, 15 Nov 2025 14:16:30 GMT"
+								},
+								{
+									"key": "server",
+									"value": "uvicorn"
+								},
+								{
+									"key": "content-length",
+									"value": "3114"
+								},
+								{
+									"key": "content-type",
+									"value": "application/json"
+								}
+							],
+							"cookie": [],
+							"body": "{\n    \"days\": [\n        {\n            \"day_number\": 1,\n            \"meals\": [\n                {\n                    \"meal_title\": \"breakfast\",\n                    \"dishes\": [\n                        {\n                            \"dish_title\": \"Панкейки з ягодами\",\n                            \"short_description\": \"М'які панкейки з свіжими ягодами та медом.\",\n                            \"nutrition\": [\n                                {\n                                    \"nutrition_title\": \"Калорії\",\n                                    \"value\": 350,\n                                    \"unit\": \"kcal\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Білки\",\n                                    \"value\": 8,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Жири\",\n                                    \"value\": 10,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Вуглеводи\",\n                                    \"value\": 55,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Цукри\",\n                                    \"value\": 15,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Клітковина\",\n                                    \"value\": 3,\n                                    \"unit\": \"g\"\n                                }\n                            ]\n                        }\n                    ]\n                },\n                {\n                    \"meal_title\": \"lunch\",\n                    \"dishes\": [\n                        {\n                            \"dish_title\": \"Борщ український\",\n                            \"short_description\": \"Класичний борщ з буряком, капустою та м'ясом.\",\n                            \"nutrition\": [\n                                {\n                                    \"nutrition_title\": \"Калорії\",\n                                    \"value\": 120,\n                                    \"unit\": \"kcal\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Білки\",\n                                    \"value\": 6,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Жири\",\n                                    \"value\": 5,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Вуглеводи\",\n                                    \"value\": 12,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Клітковина\",\n                                    \"value\": 4,\n                                    \"unit\": \"g\"\n                                }\n                            ]\n                        },\n                        {\n                            \"dish_title\": \"Пюре картопляне\",\n                            \"short_description\": \"Ніжне картопляне пюре з вершковим маслом.\",\n                            \"nutrition\": [\n                                {\n                                    \"nutrition_title\": \"Калорії\",\n                                    \"value\": 150,\n                                    \"unit\": \"kcal\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Білки\",\n                                    \"value\": 3,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Жири\",\n                                    \"value\": 7,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Вуглеводи\",\n                                    \"value\": 20,\n                                    \"unit\": \"g\"\n                                }\n                            ]\n                        }\n                    ]\n                },\n                {\n                    \"meal_title\": \"dinner\",\n                    \"dishes\": [\n                        {\n                            \"dish_title\": \"Суп-пюре з чечевицею\",\n                            \"short_description\": \"Ситний суп-пюре з червоною чечевицею та овочами.\",\n                            \"nutrition\": [\n                                {\n                                    \"nutrition_title\": \"Калорії\",\n                                    \"value\": 180,\n                                    \"unit\": \"kcal\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Білки\",\n                                    \"value\": 12,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Жири\",\n                                    \"value\": 4,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Вуглеводи\",\n                                    \"value\": 20,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Клітковина\",\n                                    \"value\": 6,\n                                    \"unit\": \"g\"\n                                }\n                            ]\n                        },\n                        {\n                            \"dish_title\": \"Капусняк з грибами\",\n                            \"short_description\": \"Традиційний капусняк з квашеною капустою та грибами.\",\n                            \"nutrition\": [\n                                {\n                                    \"nutrition_title\": \"Калорії\",\n                                    \"value\": 110,\n                                    \"unit\": \"kcal\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Білки\",\n                                    \"value\": 5,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Жири\",\n                                    \"value\": 3,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Вуглеводи\",\n                                    \"value\": 15,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Клітковина\",\n                                    \"value\": 5,\n                                    \"unit\": \"g\"\n                                }\n                            ]\n                        }\n                    ]\n                },\n                {\n                    \"meal_title\": \"snack\",\n                    \"dishes\": [\n                        {\n                            \"dish_title\": \"Вівсяне печиво з горіхами\",\n                            \"short_description\": \"Домашнє печиво з вівсяних пластівців та горіхів.\",\n                            \"nutrition\": [\n                                {\n                                    \"nutrition_title\": \"Калорії\",\n                                    \"value\": 200,\n                                    \"unit\": \"kcal\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Білки\",\n                                    \"value\": 5,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Жири\",\n                                    \"value\": 10,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Вуглеводи\",\n                                    \"value\": 25,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Цукри\",\n                                    \"value\": 10,\n                                    \"unit\": \"g\"\n                                },\n                                {\n                                    \"nutrition_title\": \"Клітковина\",\n                                    \"value\": 3,\n                                    \"unit\": \"g\"\n                                }\n                            ]\n                        }\n                    ]\n                }\n            ]\n        }\n    ]\n}"
+						}
+					]
+				},
+				{
+					"name": "/dish-info",
+					"request": {
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "password",
+									"value": "{{agent-client-secret}}",
+									"type": "string"
+								},
+								{
+									"key": "username",
+									"value": "{{agent-client-id}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"dish_uk\": \"Борщ\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{agent-api-url}}/dish-info",
+							"host": [
+								"{{agent-api-url}}"
+							],
+							"path": [
+								"dish-info"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Bot",
+			"item": [
+				{
+					"name": "/dishes",
+					"request": {
+						"auth": {
+							"type": "basic",
+							"basic": [
+								{
+									"key": "password",
+									"value": "{{bot-client-secret}}",
+									"type": "string"
+								},
+								{
+									"key": "username",
+									"value": "{{bot-client-id}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{bot-api-url}}/dishes?familyId=1",
+							"host": [
+								"{{bot-api-url}}"
+							],
+							"path": [
+								"dishes"
+							],
+							"query": [
+								{
+									"key": "familyId",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		}
+	]
+}
