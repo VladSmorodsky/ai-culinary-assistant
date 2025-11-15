@@ -13,11 +13,6 @@ async def ping():
     """Ping endpoint."""
     return {"message": "pong"}
 
-@api_router.get("/ping2")
-async def ping2():
-    """Ping endpoint."""
-    return {"message": "pong2"}
-
 @api_router.get("/")
 def root():
     return {"status": "ok", "/service": "meal-mind-agent"}

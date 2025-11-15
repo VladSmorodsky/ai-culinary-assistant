@@ -1,3 +1,7 @@
+name: meal-assistant
+networks:
+    default:
+        driver: bridge
 services:
   assistant:
     build:
