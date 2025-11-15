@@ -15,7 +15,7 @@ from .log_agent import get_log_agent
 
 log = get_log_agent()
 
-MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 LOG_PROMPTS = os.getenv("LOG_PROMPTS", "1").lower() in {"1", "true", "yes", "on"}
 
 def _llm() -> ChatOpenAI:
@@ -56,12 +56,12 @@ def _log_prompt(component: str, step: str, prompt: ChatPromptTemplate, variables
     flat_lines: List[str] = []
     for i, m in enumerate(msgs):
         content = m.get("content", "")
-        if len(content) > 400:
-            content = content[:400] + "..."
+        if len(content) > 5000:
+            content = content[:5000] + "..."
         flat_lines.append(f"[{i}:{m.get('role','?')}] {content}")
     if not flat_lines:
         # Fallback: raw template repr for diagnostic
-        flat_lines.append(f"(raw_template) {repr(prompt.messages)[:400]}")
+        flat_lines.append(f"(raw_template) {repr(prompt.messages)[:5000]}")
     flat = " || " .join(flat_lines)
     log.step(component, step, message_count=len(msgs), prompt_flat=flat)
 
@@ -155,21 +155,21 @@ DISH_INFO_PROMPT = ChatPromptTemplate.from_messages([
 
 Для вказаної страви українською мовою поверни СТРОГО валідний JSON такого формату:
 {{
-  \"dish_title\": \"Назва страви українською\",
-  \"short_description\": \"1–2 короткі речення українською\",
-  \"short_recipe\": \"1–3 короткі кроки приготування українською\",
-  \"recipe\": \"Детальний рецепт українською\",
-  \"ingredients\": [
+  "dish_title": "Назва страви українською",
+  "short_description": "1–2 короткі речення українською",
+  "short_recipe": "1–3 короткі кроки приготування українською",
+  "recipe": "Детальний рецепт українською",
+  "ingredients": [
     {{
-      \"name\": \"інгредієнт 1\",
-      \"barcode\": \"EAN або UPC формат. Якщо не можеш знайти то поверни код найбільш схожого продукту\"
+      "name": "інгредієнт 1",
+      "barcode": "EAN-13 формат з для пошуку на world.openfoodfacts.org. Якщо не можеш знайти то поверни EAN-13 код найбільш схожого продукту з world.openfoodfacts.org"
     }}
   ]
 }}
 
 Вимоги:
 - Усе текстове наповнення українською.
-- Якщо штрихкод (barcode) невідомий — поверни код найбільш схожого продукту.
+- Якщо штрихкод (barcode) невідомий — поверни EAN-13 код найбільш схожого продукту з world.openfoodfacts.org.
 - НЕ додавай нутрієнти.
 - Поверни ТІЛЬКИ JSON без пояснень.
 """),
@@ -442,6 +442,7 @@ async def dish_info(dish_uk: str) -> DishInfoResponse:
     # 2. Resolve barcodes for missing ones via MCP & caching
     names_to_lookup: List[str] = [it.uk for it in ingredient_items if not it.barcode]
     resolved_map: Dict[str, List[str]] = {}
+
     if names_to_lookup:
         log.step("dish_info", "barcode.lookup", count=len(names_to_lookup))
         mcp_client = MCPClient()
@@ -504,6 +505,9 @@ async def dish_info(dish_uk: str) -> DishInfoResponse:
     # 3. Fetch nutrition per barcode with caching & MCP only for missing
     missing_barcodes = [b for b in ordered_barcodes if not nutrition_kv.get(b)]
     nutrition_items_agg: List[NutritionItem] = []
+
+    print(missing_barcodes)
+
     if missing_barcodes:
         log.step("dish_info", "nutrition.lookup", count=len(missing_barcodes))
         mcp_client2 = MCPClient()

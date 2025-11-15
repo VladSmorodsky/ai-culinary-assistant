@@ -13,7 +13,7 @@ from .log_agent import get_log_agent
 
 log = get_log_agent()
 
-MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 
 INTENT_PLAN_EXISTING = "plan_existing_only"
 INTENT_PLAN_WITH_NEW = "plan_with_new"
