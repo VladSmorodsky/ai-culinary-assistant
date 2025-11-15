@@ -8,9 +8,12 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers.json import SimpleJsonOutputParser
 
-from .schemas import MealPlanRequest, MealPlanResponse, DishInfoResponse, IngredientsPair, NutritionItem, DayPlan
+from .schemas import MealPlanRequest, MealPlanResponse, DishInfoResponse, IngredientsPair, NutritionItem
 from .mcp_client import MCPClient
 from .storage import FileKV
+from .log_agent import get_log_agent
+
+log = get_log_agent()
 
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
@@ -174,6 +177,7 @@ TRANSLATE_NUTRITION_PROMPT = ChatPromptTemplate.from_messages([
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential_jitter(0.5, 1.5))
 async def _generate_meal_plan(req: MealPlanRequest) -> MealPlanResponse:
+    log.step("meal_plan", "llm_plan.start", days=req.days, dishes=req.dishes_uk)
     chain = PLAN_PROMPT | _llm() | json_parser
     data = await chain.ainvoke({
         "days": req.days,
@@ -181,10 +185,12 @@ async def _generate_meal_plan(req: MealPlanRequest) -> MealPlanResponse:
         "allow_new_similar": str(bool(req.allow_new_similar)).lower(),
         "new_similar_ratio": req.new_similar_ratio
     })
+    log.step("meal_plan", "llm_plan.done", keys=list(data.keys()))
     return MealPlanResponse(**data)
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential_jitter(0.5, 1.5))
 async def _enrich_with_nutrition(plan: MealPlanResponse) -> MealPlanResponse:
+    log.step("meal_plan", "nutrition_enrich.start", dish_count=sum(len(m.dishes) for d in plan.days for m in d.meals))
     serialized = plan.model_dump(mode="json")
     chain = NUTRITION_PROMPT | _llm() | json_parser
     data = await chain.ainvoke({"plan_json": json.dumps(serialized, ensure_ascii=False)})
@@ -208,23 +214,29 @@ async def _enrich_with_nutrition(plan: MealPlanResponse) -> MealPlanResponse:
                             unit=n.get("unit", "")
                         ) for n in nutrition_map[key] if isinstance(n, dict)
                     ]
+    log.step("meal_plan", "nutrition_enrich.done")
     return plan
 
 async def build_meal_plan(req: MealPlanRequest) -> MealPlanResponse:
+    log.step("meal_plan", "build.start")
     plan = await _generate_meal_plan(req)
     plan = await _enrich_with_nutrition(plan)
+    log.step("meal_plan", "build.done", days=len(plan.days))
     return plan
 
 async def _fetch_product_by_barcode(barcode: str) -> Dict[str, Any]:
+    log.step("barcode", "fetch.start", barcode=barcode)
     cached = nutrition_kv.get(barcode)
     if cached:
+        log.step("barcode", "fetch.cached", barcode=barcode)
         return cached
 
     async with httpx.AsyncClient(timeout=5.0) as client:
         try:
             resp = await client.get(f"https://world.openfoodfacts.org/api/v0/product/{barcode}.json")
             resp.raise_for_status()
-        except Exception:
+        except Exception as e:
+            log.error("barcode", "fetch.error", barcode=barcode, error=repr(e))
             return {}
 
     data = resp.json()
@@ -248,11 +260,13 @@ async def _fetch_product_by_barcode(barcode: str) -> Dict[str, Any]:
         "nutrition": nutrition
     }
     nutrition_kv.set(barcode, result)
+    log.step("barcode", "fetch.done", barcode=barcode, nutrition_count=len(nutrition))
     return result
 
 async def dish_info(dish_uk: str) -> DishInfoResponse:
+    log.step("dish_info", "start", dish=dish_uk)
     mcp_client = MCPClient()
-    external = await mcp_client.get_dish_info(dish_uk)
+    external = await mcp_client.get_dish_info(dish_uk)  # type: ignore[attr-defined]
 
     dish_title = external.get("dish_title") or dish_uk
     short_description = external.get("short_description", "")
@@ -262,6 +276,7 @@ async def dish_info(dish_uk: str) -> DishInfoResponse:
 
     en_list = ingredients.get("en") or []
     if not en_list and ingredients.get("uk"):
+        log.step("dish_info", "translate_ingredients.start")
         ingredients_text = ", ".join(ingredients["uk"])
         trans_prompt = ChatPromptTemplate.from_messages([
             ("system", "Ти — перекладач. Переклади список інгредієнтів з української на англійську."),
@@ -270,6 +285,7 @@ async def dish_info(dish_uk: str) -> DishInfoResponse:
         chain = trans_prompt | _llm() | json_parser
         trans = await chain.ainvoke({"ingredients": ingredients_text})
         en_list = trans.get("ingredients_en") or []
+        log.step("dish_info", "translate_ingredients.done", count=len(en_list))
 
     nutrition_items = [
         NutritionItem(
@@ -290,6 +306,7 @@ async def dish_info(dish_uk: str) -> DishInfoResponse:
         "nutrition": [n.model_dump(mode="json") for n in nutrition_items]
     }
 
+    log.step("dish_info", "done", dish=base.get("dish_title", dish_uk), nutrition_count=len(nutrition_items))
     return DishInfoResponse(
         dish_title=base.get("dish_title", dish_uk),
         short_description=base.get("short_description", ""),

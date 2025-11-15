@@ -3,12 +3,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.core.log_agent import request_id_middleware, get_log_agent
 
 app = FastAPI(
     title=settings.app_name,
     version=settings.version,
     debug=settings.debug,
 )
+
+# Initialize logging agent once
+get_log_agent()
 
 # CORS middleware
 app.add_middleware(
@@ -18,6 +22,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Request ID middleware for structured correlation
+app.middleware("http")(request_id_middleware)
 
 # Include API router
 app.include_router(api_router, prefix="/api/v1")

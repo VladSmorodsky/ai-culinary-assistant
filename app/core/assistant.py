@@ -1,6 +1,6 @@
 from __future__ import annotations
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import httpx
 from langchain_openai import ChatOpenAI
@@ -9,6 +9,9 @@ from langchain_core.output_parsers.json import SimpleJsonOutputParser
 
 from .schemas import MealPlanRequest, MealPlanResponse, DishInfoResponse
 from .agent import build_meal_plan, dish_info
+from .log_agent import get_log_agent
+
+log = get_log_agent()
 
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
@@ -60,13 +63,16 @@ json_parser = SimpleJsonOutputParser()
 
 async def _classify_intent(user_message: str, state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     state_json = state or {}
+    log.step("assistant", "classify.start", has_state=bool(state_json))
     chain = INTENT_PROMPT | _llm() | json_parser
     data = await chain.ainvoke({
         "user_message": user_message,
         "state_json": state_json
     })
     if not isinstance(data, dict):
+        log.step("assistant", "classify.fallback")
         return {"intent": INTENT_UNKNOWN}
+    log.step("assistant", "classify.done", intent=data.get("intent"))
     return data
 
 def _safe_get_json(resp: httpx.Response) -> Optional[Dict[str, Any]]:
@@ -116,6 +122,7 @@ def _merge_state(parsed: Dict[str, Any], state: Optional[Dict[str, Any]]) -> Dic
         "dish_uk": dish_uk,
         "preferences": prefs,
     }
+    log.step("assistant", "merge_state", intent=intent, days=days, dish_count=(len(dishes_uk) if isinstance(dishes_uk, list) else 0))
     return merged
 
 async def handle_user_message(message: str, state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -126,6 +133,7 @@ async def handle_user_message(message: str, state: Optional[Dict[str, Any]]) -> 
     - {"type": "ask", "question": "...", "state": {...}}
     - {"type": "action", "intent": "...", "result": {...}, "state": {...}}
     """
+    log.step("assistant", "handle.start")
     parsed = await _classify_intent(message, state)
     merged = _merge_state(parsed, state)
 
@@ -136,15 +144,19 @@ async def handle_user_message(message: str, state: Optional[Dict[str, Any]]) -> 
     dish_uk = merged.get("dish_uk")
     prefs = merged.get("preferences")
 
+    log.step("assistant", "intent.branch", intent=intent)
+
     # 1) Plan existing only
     if intent == INTENT_PLAN_EXISTING:
         if not days:
+            log.step("assistant", "ask.days")
             return {
                 "type": "ask",
                 "question": "На скільки днів скласти план?",
                 "state": {**(state or {}), "pending_intent": INTENT_PLAN_EXISTING, "dishes_uk": dishes_uk}
             }
         if not dishes_uk:
+            log.step("assistant", "ask.dishes")
             return {
                 "type": "ask",
                 "question": "Перерахуйте, будь ласка, ваші страви українською.",
@@ -157,12 +169,15 @@ async def handle_user_message(message: str, state: Optional[Dict[str, Any]]) -> 
             allow_new_similar=False,
             new_similar_ratio=0.0
         )
+        log.step("assistant", "plan_existing.invoke")
         plan: MealPlanResponse = await build_meal_plan(req)
+        log.step("assistant", "plan_existing.done", days=len(plan.days))
         return {"type": "action", "intent": intent, "result": plan.model_dump(mode="json"), "state": {}}
 
     # 2) Plan with new similar dishes
     if intent == INTENT_PLAN_WITH_NEW:
         if not days:
+            log.step("assistant", "ask.days")
             return {
                 "type": "ask",
                 "question": "На скільки днів скласти план?",
@@ -170,6 +185,7 @@ async def handle_user_message(message: str, state: Optional[Dict[str, Any]]) -> 
                           "new_similar_ratio": new_ratio}
             }
         if not dishes_uk:
+            log.step("assistant", "ask.dishes")
             return {
                 "type": "ask",
                 "question": "Перерахуйте, будь ласка, ваші страви українською.",
@@ -177,6 +193,7 @@ async def handle_user_message(message: str, state: Optional[Dict[str, Any]]) -> 
                           "new_similar_ratio": new_ratio}
             }
         if new_ratio is None:
+            log.step("assistant", "ask.new_ratio")
             return {
                 "type": "ask",
                 "question": "Яку частку нових схожих страв додати (0.0–1.0)?",
@@ -190,23 +207,29 @@ async def handle_user_message(message: str, state: Optional[Dict[str, Any]]) -> 
             allow_new_similar=True,
             new_similar_ratio=float(new_ratio)
         )
+        log.step("assistant", "plan_with_new.invoke", ratio=new_ratio)
         plan: MealPlanResponse = await build_meal_plan(req)
+        log.step("assistant", "plan_with_new.done", days=len(plan.days))
         return {"type": "action", "intent": intent, "result": plan.model_dump(mode="json"), "state": {}}
 
     # 3) Ingredients for a dish
     if intent == INTENT_INGR:
         if not dish_uk:
+            log.step("assistant", "ask.dish_name")
             return {
                 "type": "ask",
                 "question": "Про яку страву показати інгредієнти?",
                 "state": {**(state or {}), "pending_intent": INTENT_INGR}
             }
+        log.step("assistant", "ingredients.invoke", dish=dish_uk)
         res: DishInfoResponse = await dish_info(dish_uk)
+        log.step("assistant", "ingredients.done", nutrition_count=len(res.nutrition))
         return {"type": "action", "intent": intent, "result": res.model_dump(mode="json"), "state": {}}
 
     # 4) Find dish by preferences
     if intent == INTENT_FIND_DISH:
         if not prefs:
+            log.step("assistant", "ask.preferences")
             return {
                 "type": "ask",
                 "question": "Опишіть, будь ласка, свої вподобання (що любите/не любите, калорійність тощо).",
@@ -223,18 +246,23 @@ async def handle_user_message(message: str, state: Optional[Dict[str, Any]]) -> 
             ("human", "Побажання: {prefs}")
         ])
         chain2 = SUGGEST_PROMPT | _llm() | json_parser
+        log.step("assistant", "find_dish.invoke")
         suggestion = await chain2.ainvoke({"prefs": prefs})
         dish_name = suggestion.get("dish_uk")
         if not dish_name:
+            log.step("assistant", "find_dish.missing_name")
             return {
                 "type": "ask",
                 "question": "Не вдалося однозначно зрозуміти побажання. Спробуйте описати страву або спосіб приготування.",
                 "state": {"pending_intent": INTENT_FIND_DISH}
             }
+        log.step("assistant", "find_dish.dish_info", dish=dish_name)
         res: DishInfoResponse = await dish_info(dish_name)
+        log.step("assistant", "find_dish.done", nutrition_count=len(res.nutrition))
         return {"type": "action", "intent": intent, "result": res.model_dump(mode="json"), "state": {}}
 
     # Unknown / not supported
+    log.step("assistant", "unknown")
     return {
         "type": "ask",
         "question": (

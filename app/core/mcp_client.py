@@ -23,6 +23,7 @@ class MCPClient:
         self.params = StdioServerParameters(command=cmd, args=args)
         self._nutrition_tool_name = os.getenv("NUTRITION_TOOL_NAME") or None
         self._map_tool_name = os.getenv("MAP_TOOL_NAME") or None
+        self._dish_tool_name = os.getenv("DISH_INFO_TOOL_NAME") or None
 
     async def _find_tool(self, session: ClientSession, preferred: Optional[str], keywords: List[str]) -> str:
         tools: List[_ToolLike | Any] = await session.list_tools()  # type: ignore
@@ -111,5 +112,19 @@ class MCPClient:
                     nutrition = data
                 results[str(code)] = {"product": product, "nutrition": nutrition}
             return results
+        finally:
+            await self._close_session(resources)
+
+    async def get_dish_info(self, dish_name: str) -> Dict[str, Any]:
+        """Attempt to retrieve dish info JSON from an MCP tool.
+        Falls back to minimal structure if tool not available or returns invalid output.
+        """
+        session, resources, _rw = await self._open_session()
+        try:
+            tool = await self._find_tool(session, self._dish_tool_name, ["dish", "recipe", "info"])  # reuse heuristic
+            data = await self._call_json_tool(session, tool, {"query": dish_name})
+            if isinstance(data, dict):
+                return data
+            return {"dish_title": dish_name}
         finally:
             await self._close_session(resources)

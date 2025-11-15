@@ -30,3 +30,10 @@ class FileKV:
         data = self.read()
         data[key] = value
         self.write(data)
+
+    # Added convenience methods for compatibility
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.read().get(key, default)
+
+    def set(self, key: str, value: Any) -> None:
+        self.upsert(key, value)
