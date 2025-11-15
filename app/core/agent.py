@@ -175,6 +175,77 @@ TRANSLATE_NUTRITION_PROMPT = ChatPromptTemplate.from_messages([
     ("human", "Ось JSON списку нутрієнтів українською: {nutrition_json}")
 ])
 
+def _normalize_plan_dict(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize raw LLM plan JSON into schema-compatible structure.
+
+    Transforms keys:
+    - day -> day_number
+    - meal_type -> meal_title
+    Ensures each dish has a nutrition list (may be empty) to satisfy DishItem schema.
+    Ignores unknown fields gracefully.
+    """
+    days = data.get("days")
+    if not isinstance(days, list):
+        return data
+    normalized_days: List[Dict[str, Any]] = []
+    for day in days:
+        if not isinstance(day, dict):
+            continue
+        d: Dict[str, Any] = {}
+        # Map day number
+        if "day_number" in day:
+            d["day_number"] = day.get("day_number")
+        elif "day" in day:
+            d["day_number"] = day.get("day")
+        else:
+            # fallback: sequential index starting at 1
+            d["day_number"] = len(normalized_days) + 1
+
+        meals = day.get("meals") if isinstance(day.get("meals"), list) else []
+        normalized_meals: List[Dict[str, Any]] = []
+        for meal in meals:
+            if not isinstance(meal, dict):
+                continue
+            m: Dict[str, Any] = {}
+            if "meal_title" in meal:
+                m["meal_title"] = meal.get("meal_title")
+            elif "meal_type" in meal:
+                m["meal_title"] = meal.get("meal_type")
+            else:
+                m["meal_title"] = ""  # will be normalized by validator
+            dishes = meal.get("dishes") if isinstance(meal.get("dishes"), list) else []
+            normalized_dishes: List[Dict[str, Any]] = []
+            for dish in dishes:
+                if not isinstance(dish, dict):
+                    continue
+                di: Dict[str, Any] = {}
+                di["dish_title"] = dish.get("dish_title") or dish.get("title") or ""
+                di["short_description"] = dish.get("short_description") or dish.get("description") or ""
+                # Ensure nutrition list present
+                nutrition = dish.get("nutrition")
+                if not isinstance(nutrition, list):
+                    nutrition = []
+                # Normalize nutrition items if any present (sometimes LLM may include them despite prompt)
+                norm_nutrition: List[Dict[str, Any]] = []
+                for n in nutrition:
+                    if isinstance(n, dict):
+                        norm_nutrition.append({
+                            "nutrition_title": n.get("nutrition_title") or n.get("title") or n.get("name", ""),
+                            "value": n.get("value", 0),
+                            "unit": n.get("unit", "")
+                        })
+                di["nutrition"] = norm_nutrition
+                normalized_dishes.append(di)
+            if normalized_dishes:
+                m["dishes"] = normalized_dishes
+                normalized_meals.append(m)
+        if normalized_meals:
+            d["meals"] = normalized_meals
+            normalized_days.append(d)
+    if normalized_days:
+        data["days"] = normalized_days
+    return data
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential_jitter(0.5, 1.5))
 async def _generate_meal_plan(req: MealPlanRequest) -> MealPlanResponse:
     log.step("meal_plan", "llm_plan.start", days=req.days, dishes=req.dishes_uk)
@@ -185,8 +256,15 @@ async def _generate_meal_plan(req: MealPlanRequest) -> MealPlanResponse:
         "allow_new_similar": str(bool(req.allow_new_similar)).lower(),
         "new_similar_ratio": req.new_similar_ratio
     })
+    # Normalize structure to current schema
+    data = _normalize_plan_dict(data if isinstance(data, dict) else {})
     log.step("meal_plan", "llm_plan.done", keys=list(data.keys()))
-    return MealPlanResponse(**data)
+    try:
+        return MealPlanResponse(**data)
+    except Exception as e:
+        # Log the raw data for debugging before retrying
+        log.exception("meal_plan", "llm_plan.validation_fail", detail=str(e))
+        raise
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential_jitter(0.5, 1.5))
 async def _enrich_with_nutrition(plan: MealPlanResponse) -> MealPlanResponse:
@@ -194,25 +272,27 @@ async def _enrich_with_nutrition(plan: MealPlanResponse) -> MealPlanResponse:
     serialized = plan.model_dump(mode="json")
     chain = NUTRITION_PROMPT | _llm() | json_parser
     data = await chain.ainvoke({"plan_json": json.dumps(serialized, ensure_ascii=False)})
-    nutrition_map: Dict[Tuple[int, str], List[Dict[str, Any]]] = {}
+    # Build map keyed only by dish title (LLM output currently lacks day info)
+    nutrition_map: Dict[str, List[Dict[str, Any]]] = {}
     for item in data.get("items", []):
-        day = item.get("day")
-        dish_title = item.get("dish_uk")
-        if day is None or dish_title is None:
+        if not isinstance(item, dict):
             continue
-        nutrition_map[(day, dish_title)] = item.get("nutrition", [])
+        dish_title = item.get("dish_uk")
+        if not dish_title:
+            continue
+        nutrition_map[dish_title] = item.get("nutrition", [])
 
+    # Assign nutrition by dish title match
     for day in plan.days:
         for meal in day.meals:
             for dish in meal.dishes:
-                key = (day.day, dish.dish_title)
-                if key in nutrition_map:
+                if dish.dish_title in nutrition_map:
                     dish.nutrition = [
                         NutritionItem(
                             nutrition_title=n.get("nutrition_title") or n.get("title") or n.get("name", ""),
                             value=float(n.get("value", 0) or 0),
                             unit=n.get("unit", "")
-                        ) for n in nutrition_map[key] if isinstance(n, dict)
+                        ) for n in nutrition_map[dish.dish_title] if isinstance(n, dict)
                     ]
     log.step("meal_plan", "nutrition_enrich.done")
     return plan
