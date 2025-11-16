@@ -87,7 +87,7 @@ PLAN_PROMPT = ChatPromptTemplate.from_messages([
       "day": 1,
       "meals": [
         {{
-          "meal_type": "breakfast" | "lunch" | "dinner" | "snack",
+          "meal_type": "Cніданок" | "Обід" | "Вечеря" | "Перекус",
           "dishes": [
             {{
               "dish_title": "...",
