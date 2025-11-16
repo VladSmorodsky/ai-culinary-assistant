@@ -50,4 +50,4 @@ EXPOSE ${PORT:-8000}
 VOLUME  /app
 
 # Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "${PORT:-8000}", "--reload"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port ${PORT:-8000}", "--reload"]
