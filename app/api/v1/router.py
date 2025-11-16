@@ -26,6 +26,9 @@ def root():
 @api_router.post("/meal-plan", response_model=MealPlanResponse)
 async def meal_plan(req: MealPlanRequest, _auth=Depends(verify_basic_auth)):
     log.step("meal_plan", "start", payload=req.model_dump())
+    # Explicitly log user_message for traceability
+    if req.user_message:
+        log.step("meal_plan", "user_message", message=req.user_message[:500])
     try:
         with log.timed("meal_plan", "build_meal_plan"):
             result = await build_meal_plan(req)

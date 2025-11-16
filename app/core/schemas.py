@@ -54,7 +54,7 @@ class IngredientsPair(BaseModel):  # pragma: no cover
 
 
 class IngredientItem(BaseModel):
-    uk: str
+    name: str
     nutrition: List[NutritionItem] = Field(
         default_factory=list
     )  # nutrition data for this ingredient
@@ -78,6 +78,7 @@ class MealPlanRequest(BaseModel):
     dishes_uk: List[str] = Field(default_factory=list)
     allow_new_similar: bool = False
     new_similar_ratio: float = Field(0.0, ge=0.0, le=1.0)
+    user_message: Optional[str] = ""  # additional user preference text
 
     @field_validator("new_similar_ratio")
     @classmethod

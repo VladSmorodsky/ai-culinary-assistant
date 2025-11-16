@@ -104,6 +104,35 @@ Make sure PostgreSQL and Redis are running locally, then:
 uvicorn app.main:app --reload
 ```
 
+## docker-compose.override.yml
+
+This repository includes a `docker-compose.override.yml` used only for local development. It adds:
+
+- `container_name` (so you see a friendly name locally)
+- `ports` mapping `8000:8000` to access the FastAPI app
+
+The base `docker-compose.yml` intentionally uses `expose` instead of `ports` to avoid public bindings and port conflicts in managed environments like Easypanel.
+
+Local usage (Compose automatically loads the override file):
+```bash
+docker compose up -d
+```
+
+If you want to ignore the override (simulate production/Easypanel):
+```bash
+docker compose -f docker-compose.yml up -d
+```
+
+## Deploying on Easypanel / VPS
+
+When deploying to Easypanel:
+
+- Upload only `docker-compose.yml` (omit `docker-compose.override.yml`)
+- Easypanel will manage port publishing; since we only `expose: 8000`, it can assign or map without conflicts
+- Do NOT include `container_name` or manual `ports` in production to prevent collisions with other apps
+
+If Easypanel requires an external port, configure it in the panel UI rather than adding `ports:` in compose.
+
 ## Project Structure
 
 ```
@@ -137,6 +166,7 @@ ai-culinary-assistant/
 ├── .env.example                     # Example env file for Docker
 ├── .env.local.example               # Example env file for local development
 ├── docker-compose.yml               # Docker Compose configuration
+├── docker-compose.override.yml # Local-only overrides (do not deploy)
 ├── Dockerfile                       # Docker image definition
 ├── pyproject.toml                   # Poetry dependencies
 ├── poetry.lock                      # Locked dependencies

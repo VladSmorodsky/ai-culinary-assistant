@@ -1,7 +1,4 @@
-name: meal-assistant
-networks:
-    default:
-        driver: bridge
+# Local development overrides ONLY. Do not deploy this file to Easypanel/production.
 services:
   assistant:
     build:
@@ -9,11 +6,15 @@ services:
       dockerfile: Dockerfile
       args:
         - INSTALL_DEV=true
-    expose:
-      - "8000"
+    container_name: meal-assistant
+    ports:
+      - "8000:8000"
     volumes:
       - ./:/app
       - ./data:/app/data
     env_file:
       - .env
-    restart: unless-stopped
+
+networks:
+    default:
+        driver: bridge

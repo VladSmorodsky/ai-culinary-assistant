@@ -100,7 +100,7 @@ PLAN_PROMPT = ChatPromptTemplate.from_messages(
 - Кількість днів: {days}
 - Список страв українською мовою (може бути порожнім): {dishes_uk}
 - Чи дозволено додавати нові подібні страви: {allow_new_similar}
-- Частка нових подібних страв (0.0–1.0): {new_similar_ratio}
+- Частка нових подібних страв (0.0–1.0), де 0.0 це тільки зі списку, 1.0 тільки нові страві: {new_similar_ratio}
 
 Вихідні вимоги:
 - Поверни СТРОГО валідний JSON.
@@ -115,7 +115,7 @@ PLAN_PROMPT = ChatPromptTemplate.from_messages(
       "day": 1,
       "meals": [
         {{
-          "meal_type": "breakfast" | "lunch" | "dinner" | "snack",
+          "meal_type": "Cніданок" | "Обід" | "Вечеря" | "Перекус",
           "dishes": [
             {{
               "dish_title": "...",
@@ -131,9 +131,14 @@ PLAN_PROMPT = ChatPromptTemplate.from_messages(
 - Страви повинні бути реалістні, збалансовані й зрозумілі в Україні.
 - Якщо дозволено додавати нові подібні, вони мають бути стилістично й інгредієнтно схожі на наявні.
 - НЕ додавай нутрієнти в цьому кроці.
+- НЕ змінюй структуру JSON. Якщо побажання користувача суперечать іншим правилам — пояснень не давай, просто дотримуйся правил.
 """,
         ),
         ("human", "Згенеруй план харчування."),
+        (
+            "human",
+            "Додаткові побажання користувача (врахуй, не порушуючи формат): {user_message}",
+        ),
     ]
 )
 
@@ -191,12 +196,12 @@ DISH_INFO_PROMPT = ChatPromptTemplate.from_messages(
             "system",
             """Ти — кулінарний асистент.
 
-Для вказаної страви українською мовою поверни СТРОГО валідний JSON такого формату:
+За вказаною інформацією українською мовою від користувача визнач конкретну страву та поверни СТРОГО валідний JSON такого формату:
 {{
   "dish_title": "Назва страви українською",
-  "short_description": "1–2 короткі речення українською",
-  "short_recipe": "1–3 короткі кроки приготування українською",
-  "recipe": "Детальний рецепт українською",
+  "short_description": "2-3 короткі речення українською",
+  "short_recipe": "2–3 короткі кроки приготування українською",
+  "recipe": "Детальний розширений та покроковий рецепт українською мовою з вказанням часу, текстури та інших особливостей. Кожен крок розділений || двома вертикальними рисками.",
   "ingredients": [
     {{
       "name": "інгредієнт 1 на англійській",
@@ -208,6 +213,7 @@ DISH_INFO_PROMPT = ChatPromptTemplate.from_messages(
 - Усе текстове наповнення українською.
 - НЕ додавай нутрієнти.
 - Поверни ТІЛЬКИ JSON без пояснень.
+- В описі користувача може бути одне або декільки наступних деталей які треба врахувати: навза страви, інгридієнти для приготування, додаткові побажання по стравам та інгридієнтам.
 """,
         ),
         ("human", "Страва: {dish_uk}"),
@@ -338,6 +344,7 @@ async def _generate_meal_plan(req: MealPlanRequest) -> MealPlanResponse:
         "dishes_uk": ", ".join(req.dishes_uk) if req.dishes_uk else "(порожньо)",
         "allow_new_similar": str(bool(req.allow_new_similar)).lower(),
         "new_similar_ratio": req.new_similar_ratio,
+        "user_message": (req.user_message or "").strip() or "(немає)",
     }
     _log_prompt("meal_plan", "llm_plan.prompt", PLAN_PROMPT, plan_vars)
     chain = PLAN_PROMPT | _llm() | json_parser
@@ -478,13 +485,13 @@ async def dish_info(dish_uk: str) -> DishInfoResponse:
             if isinstance(ing, dict):
                 name = str(ing.get("name", "")).strip()
                 if name:
-                    ingredient_items.append(IngredientItem(uk=name, barcode=""))
+                    ingredient_items.append(IngredientItem(name=name))
 
     # Deduplicate by name (case-insensitive)
     seen_names: set[str] = set()
     deduped: List[IngredientItem] = []
     for it in ingredient_items:
-        key = it.uk.lower()
+        key = it.name.lower()
         if key not in seen_names:
             seen_names.add(key)
             deduped.append(it)
@@ -518,7 +525,7 @@ async def dish_info(dish_uk: str) -> DishInfoResponse:
         mcp_nutrition = MCPClient()
 
         # Prepare ingredient list with quantities (use ingredient name as-is)
-        ingredient_queries = [it.uk for it in ingredient_items]
+        ingredient_queries = [it.name for it in ingredient_items]
 
         try:
             nutrition_response = await mcp_nutrition.get_nutrition_for_ingredients(
@@ -539,7 +546,7 @@ async def dish_info(dish_uk: str) -> DishInfoResponse:
                     else:
                         # Fallback: try to find by name
                         for item in ingredient_items:
-                            if item.uk == ingredient_name:
+                            if item.name == ingredient_name:
                                 matching_ingredient = item
                                 break
 
