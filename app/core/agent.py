@@ -103,8 +103,10 @@ PLAN_PROMPT = ChatPromptTemplate.from_messages([
 - Страви повинні бути реалістні, збалансовані й зрозумілі в Україні.
 - Якщо дозволено додавати нові подібні, вони мають бути стилістично й інгредієнтно схожі на наявні.
 - НЕ додавай нутрієнти в цьому кроці.
+- НЕ змінюй структуру JSON. Якщо побажання користувача суперечать іншим правилам — пояснень не давай, просто дотримуйся правил.
 """),
-    ("human", "Згенеруй план харчування.")
+    ("human", "Згенеруй план харчування."),
+    ("human", "Додаткові побажання користувача (врахуй, не порушуючи формат): {user_message}")
 ])
 
 NUTRITION_PROMPT = ChatPromptTemplate.from_messages([
@@ -287,7 +289,8 @@ async def _generate_meal_plan(req: MealPlanRequest) -> MealPlanResponse:
         "days": req.days,
         "dishes_uk": ", ".join(req.dishes_uk) if req.dishes_uk else "(порожньо)",
         "allow_new_similar": str(bool(req.allow_new_similar)).lower(),
-        "new_similar_ratio": req.new_similar_ratio
+        "new_similar_ratio": req.new_similar_ratio,
+        "user_message": (req.user_message or "").strip() or "(немає)"
     }
     _log_prompt("meal_plan", "llm_plan.prompt", PLAN_PROMPT, plan_vars)
     chain = PLAN_PROMPT | _llm() | json_parser

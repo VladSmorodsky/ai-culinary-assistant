@@ -9,12 +9,6 @@ class Settings(BaseSettings):
     debug: bool = False
     version: str = "0.1.0"
 
-    # Database
-    database_url: str
-
-    # Redis
-    redis_url: str
-
     # Security
     secret_key: str
 
