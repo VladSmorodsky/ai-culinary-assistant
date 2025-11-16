@@ -4,16 +4,19 @@ from pydantic import BaseModel, Field, field_validator
 
 MEAL_TITLES_UK = ["сніданок", "обід", "вечеря"]
 
+
 class NutritionItem(BaseModel):
     nutrition_title: str
     value: float
     unit: str
+
 
 class DishItem(BaseModel):
     dish_title: str
     short_description: str
     short_recipe: str = ""  # newly added concise recipe (1–3 sentences or steps)
     nutrition: List[NutritionItem]
+
 
 class MealItem(BaseModel):
     meal_title: str
@@ -23,37 +26,52 @@ class MealItem(BaseModel):
     @classmethod
     def normalize_title(cls, v: str) -> str:
         v = v.strip().lower()
-        map_alias = {"сніданок":"сніданок","обід":"обід","ланч":"обід","вечеря":"вечеря"}
+        map_alias = {
+            "сніданок": "сніданок",
+            "обід": "обід",
+            "ланч": "обід",
+            "вечеря": "вечеря",
+        }
         return map_alias.get(v, v)
+
 
 class DayPlan(BaseModel):
     day_number: int = Field(..., ge=1)
     meals: List[MealItem] = Field(..., min_length=1)
 
+
 class MealPlanResponse(BaseModel):
     days: List[DayPlan] = Field(..., min_length=1)
+
 
 # Deprecated structure (kept for potential backward compatibility)
 class IngredientsPair(BaseModel):  # pragma: no cover
     uk: List[str]
     en: List[str]
-    barcodes: List[str] = Field(default_factory=list)  # aligned list of barcodes (EAN/UPC) for ingredients
+    barcodes: List[str] = Field(
+        default_factory=list
+    )  # aligned list of barcodes (EAN/UPC) for ingredients
+
 
 class IngredientItem(BaseModel):
     uk: str
-    barcode: Optional[str] = ""  # EAN/UPC string or empty if unresolved
+    nutrition: List[NutritionItem] = Field(
+        default_factory=list
+    )  # nutrition data for this ingredient
+
 
 class DishInfoRequest(BaseModel):
     dish_uk: str
+
 
 class DishInfoResponse(BaseModel):
     dish_title: str
     short_description: str
     short_recipe: str = ""  # new field
     recipe: str  # keeping original longer recipe for backward compatibility
-    # New ingredients representation: list of objects with uk + barcode
+    # Ingredients with nutrition data for each ingredient
     ingredients: List[IngredientItem]
-    nutrition: List[NutritionItem]
+
 
 class MealPlanRequest(BaseModel):
     days: int = Field(..., ge=1, le=30)
@@ -69,10 +87,12 @@ class MealPlanRequest(BaseModel):
             return 0.0
         return v
 
+
 class AssistantRequest(BaseModel):
     message: str
     user_id: Optional[str] = None
     session_state: Optional[Dict[str, Any]] = None
+
 
 class AssistantResponse(BaseModel):
     type: str
