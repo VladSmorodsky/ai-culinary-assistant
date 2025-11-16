@@ -1,0 +1,6 @@
+# Local development overrides ONLY. Do not deploy this file to Easypanel/production.
+services:
+  assistant:
+    container_name: meal-assistant
+    ports:
+      - "8000:8000"
