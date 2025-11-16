@@ -7,10 +7,7 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     POETRY_VERSION=1.8.3 \
     POETRY_NO_INTERACTION=1 \
-    POETRY_VIRTUALENVS_CREATE=false \
-    DATA_DIR=/app/data \
-    LOG_DIR=/app/data/logs \
-    PORT=8000
+    POETRY_VIRTUALENVS_CREATE=false
 
 # Set working directory
 WORKDIR /app
@@ -43,18 +40,14 @@ RUN if [ "$INSTALL_DEV" = "true" ] ; then \
 RUN git clone --depth 1 https://github.com/nagarjun226/food-tracker-mcp.git /opt/food-tracker-mcp && \
     pip install --no-cache-dir /opt/food-tracker-mcp
 
-# Create a non-root user and prepare data/log directories
-RUN useradd -m -u 1000 appuser && \
-    mkdir -p /app/data/logs && \
-    chown -R appuser:appuser /app
-
+# Create a non-root user
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
 # Expose port
 EXPOSE 8000
 
-# Optional: persist only data (not whole /app)
-VOLUME /app/data
+VOLUME  /app
 
 # Run the application
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
