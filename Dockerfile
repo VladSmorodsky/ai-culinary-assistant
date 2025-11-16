@@ -43,13 +43,6 @@ RUN if [ "$INSTALL_DEV" = "true" ] ; then \
 RUN git clone --depth 1 https://github.com/nagarjun226/food-tracker-mcp.git /opt/food-tracker-mcp && \
     pip install --no-cache-dir /opt/food-tracker-mcp
 
-# Create a non-root user and prepare data/log directories
-#RUN useradd -m -u 1000 appuser && \
-#    mkdir -p /app/data/logs && \
-#    chown -R appuser:appuser /app
-#
-#USER appuser
-
 # Expose port
 EXPOSE 8000
 
