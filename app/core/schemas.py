@@ -55,6 +55,7 @@ class IngredientsPair(BaseModel):  # pragma: no cover
 
 class IngredientItem(BaseModel):
     name: str
+    uk: str
     nutrition: List[NutritionItem] = Field(
         default_factory=list
     )  # nutrition data for this ingredient

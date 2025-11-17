@@ -205,6 +205,7 @@ DISH_INFO_PROMPT = ChatPromptTemplate.from_messages(
   "ingredients": [
     {{
       "name": "інгредієнт 1 на англійській",
+      "uk": "інгредієнт 1 на українській",
     }}
   ]
 }}
@@ -484,8 +485,9 @@ async def dish_info(dish_uk: str) -> DishInfoResponse:
         for ing in ing_list_raw:
             if isinstance(ing, dict):
                 name = str(ing.get("name", "")).strip()
+                uk = str(ing.get("uk", "")).strip()
                 if name:
-                    ingredient_items.append(IngredientItem(name=name))
+                    ingredient_items.append(IngredientItem(name=name, uk=uk))
 
     # Deduplicate by name (case-insensitive)
     seen_names: set[str] = set()
