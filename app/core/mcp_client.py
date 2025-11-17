@@ -3,6 +3,7 @@ import json
 import os
 import shlex
 from typing import Any, Dict, List, Optional, Tuple, Protocol
+from contextlib import asynccontextmanager
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client  # type: ignore
@@ -69,24 +70,17 @@ class MCPClient:
             raise RuntimeError("Tools returned without 'name' attribute.")
         return first_name
 
-    async def _open_session(self) -> Tuple[ClientSession, Any, Any]:
-        """Open a stdio client session and return (session, read, write)."""
-        ctx = stdio_client(self.params)
-        read_write = await ctx.__aenter__()
-        read, write = read_write
-        session_cm = ClientSession(read, write)
-        session = await session_cm.__aenter__()
-        # Initialize the MCP session before using it
-        await session.initialize()
-        # Package so caller can close properly
-        return session, (ctx, session_cm), (read, write)
+    @asynccontextmanager
+    async def _session(self) -> Any:
+        """Async context manager yielding an initialized ClientSession.
 
-    async def _close_session(self, resources: Tuple[Any, Any]) -> None:
-        ctx, session_cm = resources
-        try:
-            await session_cm.__aexit__(None, None, None)
-        finally:
-            await ctx.__aexit__(None, None, None)
+        This replaces manual __aenter__/__aexit__ calls to avoid mismatched
+        cancel scope exits inside anyio's task groups.
+        """
+        async with stdio_client(self.params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                yield session
 
     async def _call_json_tool(
         self, session: ClientSession, tool_name: str, payload: Dict[str, Any]
@@ -121,24 +115,22 @@ class MCPClient:
             Dict with structure: {"ingredients": [...], "total_count": N}
             Each ingredient has: {"ingredient": str, "calories": float, "nutrients": {...}}
         """
-        session, resources, _rw = await self._open_session()
-        try:
+        async with self._session() as session:
             try:
-                tool = await self._find_tool(
-                    session,
-                    self._nutrition_tool_name,
-                    ["nutrition", "ingredient", "edamam"],
-                )
-            except Exception:
-                return {"ingredients": [], "total_count": 0}
+                try:
+                    tool = await self._find_tool(
+                        session,
+                        self._nutrition_tool_name,
+                        ["nutrition", "ingredient", "edamam"],
+                    )
+                except Exception:
+                    return {"ingredients": [], "total_count": 0}
 
-            data = await self._call_json_tool(
-                session, tool, {"ingredients": ingredients}
-            )
-            if isinstance(data, dict):
-                return data
-            return {"ingredients": [], "total_count": 0}
-        except (McpError, RuntimeError):
-            return {"ingredients": [], "total_count": 0}
-        finally:
-            await self._close_session(resources)
+                data = await self._call_json_tool(
+                    session, tool, {"ingredients": ingredients}
+                )
+                if isinstance(data, dict):
+                    return data
+                return {"ingredients": [], "total_count": 0}
+            except (McpError, RuntimeError):
+                return {"ingredients": [], "total_count": 0}
