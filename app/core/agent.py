@@ -40,11 +40,12 @@ nutrition_kv = FileKV(NUTRITION_PATH)  # barcode -> {product, nutrition}
 
 json_parser = SimpleJsonOutputParser()
 
+
 # Helper: format prompt messages for logging (use format_messages for reliability)
 
 
 def _format_prompt_messages(
-    prompt: ChatPromptTemplate, variables: Dict[str, Any]
+        prompt: ChatPromptTemplate, variables: Dict[str, Any]
 ) -> List[Dict[str, str]]:
     try:
         messages = prompt.format_messages(**variables)
@@ -72,20 +73,24 @@ def _format_prompt_messages(
 
 
 def _log_prompt(
-    component: str, step: str, prompt: ChatPromptTemplate, variables: Dict[str, Any]
+        component: str, step: str, prompt: ChatPromptTemplate, variables: Dict[str, Any]
 ):
     if not LOG_PROMPTS:
         return
+
     msgs = _format_prompt_messages(prompt, variables)
     flat_lines: List[str] = []
+
     for i, m in enumerate(msgs):
         content = m.get("content", "")
         if len(content) > 5000:
             content = content[:5000] + "..."
         flat_lines.append(f"[{i}:{m.get('role', '?')}] {content}")
+
     if not flat_lines:
         # Fallback: raw template repr for diagnostic
         flat_lines.append(f"(raw_template) {repr(prompt.messages)[:5000]}")
+
     flat = " || ".join(flat_lines)
     log.step(component, step, message_count=len(msgs), prompt_flat=flat)
 
@@ -305,7 +310,7 @@ def _normalize_plan_dict(data: Dict[str, Any]) -> Dict[str, Any]:
                 di: Dict[str, Any] = {}
                 di["dish_title"] = dish.get("dish_title") or dish.get("title") or ""
                 di["short_description"] = (
-                    dish.get("short_description") or dish.get("description") or ""
+                        dish.get("short_description") or dish.get("description") or ""
                 )
                 # Ensure nutrition list present
                 nutrition = dish.get("nutrition")
@@ -318,8 +323,8 @@ def _normalize_plan_dict(data: Dict[str, Any]) -> Dict[str, Any]:
                         norm_nutrition.append(
                             {
                                 "nutrition_title": n.get("nutrition_title")
-                                or n.get("title")
-                                or n.get("name", ""),
+                                                   or n.get("title")
+                                                   or n.get("name", ""),
                                 "value": n.get("value", 0),
                                 "unit": n.get("unit", ""),
                             }
@@ -389,8 +394,8 @@ async def _enrich_with_nutrition(plan: MealPlanResponse) -> MealPlanResponse:
                     dish.nutrition = [
                         NutritionItem(
                             nutrition_title=n.get("nutrition_title")
-                            or n.get("title")
-                            or n.get("name", ""),
+                                            or n.get("title")
+                                            or n.get("name", ""),
                             value=float(n.get("value", 0) or 0),
                             unit=n.get("unit", ""),
                         )
